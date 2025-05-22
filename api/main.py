@@ -4,6 +4,9 @@ from fastapi import FastAPI
 
 from api.database import SessionLocal, simples_distance_query
 from api.utils import vector_to_compare
+from api.models import ChatRequest
+from api.chat import chat
+
 
 # Configure logging
 logging.basicConfig(
@@ -30,3 +33,12 @@ def test_distance():
         ):
             result.append({"memory": {"id": memory.id, "content": memory.content }, "proximity": (1 - distance) * 100})
         return {"items": result}
+
+
+@app.post("/v1/chat")
+def post_v1_chat(req: ChatRequest):
+    message = req.message
+    
+    answer = chat(message)
+        
+    return answer

@@ -1,8 +1,9 @@
-from sqlalchemy import Column, Result, String, Text, create_engine, select
+from sqlalchemy import Column, Result, String, Text, create_engine, select, input
 from sqlalchemy.orm import Mapped, Session, declarative_base, mapped_column, sessionmaker
 from pgvector.sqlalchemy import Vector
 from ulid import ulid
 from logging import getLogger
+
 
 logger = getLogger(__name__)
 
@@ -30,3 +31,12 @@ def simples_distance_query(session: Session, query_vector: list[float], limit: i
     logger.info(f"query made: {str(select_query)}")
 
     return session.execute(select_query)
+
+def save_history(session: Session, message: str, message_vector:list[float], answer: str, answer_vector:list[float]):
+    # Insert message
+    message_memory = Memory(content=message, vector=message_vector)
+    session.add(message_memory)
+    # Insert answer
+    answer_memory = Memory(content=answer, vector=answer_vector)
+    session.add(answer_memory)
+    session.commit()

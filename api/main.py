@@ -1,6 +1,14 @@
+import logging
+
 from fastapi import FastAPI
 
 from api.database import SessionLocal, simples_distance_query
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s"
+)
 
 app = FastAPI()
 

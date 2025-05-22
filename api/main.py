@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import FastAPI
-
+from api.chat import router as chat_router
 from api.database import SessionLocal, simples_distance_query
 from api.utils import vector_to_compare
 
@@ -13,6 +13,7 @@ logging.basicConfig(
 
 app = FastAPI()
 
+app.include_router(chat_router, prefix="/v1")
 
 @app.get("/")
 def entrypoint():

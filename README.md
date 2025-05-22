@@ -27,6 +27,8 @@ Use a linguagem de programação que voce tiver mais dominio. A ideia do desafio
 
 Todos os PRs feitos para o repositório base receberão um review até amanhão 23 de Maio de 2025 ao final do dia. Se voce não conseguir terminar hoje o desafio, voce tem até amanha a noite.
 
+Foi disponbilizado um docker-compose no repositorio na pasta docker com uma configuracao basica e uma imagem que já vem com a extensao do pgvector. Mas senta-se livre para utilizar a solucao de vector database que voce achar melhor!!
+
 ## BONUS!
 
 Todos que acompanharem a aula online, receberão uma chave de API da OpenAI que será desativada no mesmo dia do desafio ao final do dia. Usem com moderação  e bom desafio!!!

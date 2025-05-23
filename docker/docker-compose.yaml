@@ -3,7 +3,44 @@ services:
     image: "ankane/pgvector"
     environment:
       - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=postgres
     ports:
       - "6000:5432"
     volumes:
       - "./init.sql:/docker-entrypoint-initdb.d/init.sql:ro"
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - terabyte_network
+
+  fastapi:
+    build: 
+      context: ..
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgresql:5432/postgres
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+    volumes:
+      - ../:/app:ro
+    depends_on:
+      postgresql:
+        condition: service_healthy
+    networks:
+      - terabyte_network
+    restart: unless-stopped
+    command: ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  postgres_data:
+
+networks:
+  terabyte_network:
+    driver: bridge

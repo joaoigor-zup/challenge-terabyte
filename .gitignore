@@ -2,3 +2,5 @@
 .idea
 
 api/__pycache__/**
+
+.env

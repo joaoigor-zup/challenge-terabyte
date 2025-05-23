@@ -15,7 +15,7 @@ logger = getLogger(__name__)
 
 FIXED_SYSTEM_PROMPT = {"role": "system", "content": "You are a helpful LLM assistant. Reply with short sentenses. Call the provided tools if needed"}
 
-def getCurrentDateAndTime() -> datetime.datetime:
+def getCurrentDateAndTime() -> str:
     """
     Gets the current date and time
 

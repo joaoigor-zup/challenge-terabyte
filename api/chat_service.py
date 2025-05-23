@@ -3,7 +3,7 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, text
 from openai import OpenAI
 from ulid import ulid
 
@@ -35,72 +35,113 @@ class ChatService:
     
     def create_or_get_conversation(self, session: Session, conversation_id: Optional[str] = None) -> Conversation:
         """Cria uma nova conversa ou retorna uma existente."""
-        if conversation_id:
-            conversation = session.get(Conversation, conversation_id)
-            if conversation:
-                return conversation
-        
-        # Cria nova conversa
-        conversation = Conversation(
-            id=str(ulid()),
-            title=None,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow()
-        )
-        session.add(conversation)
-        session.commit()
-        session.refresh(conversation)
-        return conversation
+        try:
+            if conversation_id:
+                conversation = session.get(Conversation, conversation_id)
+                if conversation:
+                    return conversation
+            
+            # Cria nova conversa
+            conversation = Conversation(
+                id=str(ulid()),
+                title=None,
+                created_at=datetime.utcnow(),
+                updated_at=datetime.utcnow()
+            )
+            session.add(conversation)
+            session.commit()
+            session.refresh(conversation)
+            logger.info(f"Nova conversa criada: {conversation.id}")
+            return conversation
+        except Exception as e:
+            logger.error(f"Erro ao criar/obter conversa: {e}")
+            session.rollback()
+            raise
     
     def save_message(self, session: Session, conversation_id: str, role: str, content: str, 
                     tool_name: Optional[str] = None, tool_call_id: Optional[str] = None) -> Message:
         """Salva uma mensagem no banco de dados com embedding."""
-        embedding = self.get_embedding(content) if content.strip() else []
-        
-        message = Message(
-            id=str(ulid()),
-            conversation_id=conversation_id,
-            role=role,
-            content=content,
-            embedding=embedding if embedding else None,
-            tool_name=tool_name,
-            tool_call_id=tool_call_id,
-            created_at=datetime.utcnow()
-        )
-        
-        session.add(message)
-        session.commit()
-        session.refresh(message)
-        return message
+        try:
+            # Gerar embedding apenas se o conteúdo não estiver vazio
+            embedding = None
+            if content and content.strip():
+                embedding = self.get_embedding(content)
+            
+            message = Message(
+                id=str(ulid()),
+                conversation_id=conversation_id,
+                role=role,
+                content=content,
+                embedding=embedding if embedding else None,
+                tool_name=tool_name,
+                tool_call_id=tool_call_id,
+                created_at=datetime.utcnow()
+            )
+            
+            session.add(message)
+            session.commit()
+            session.refresh(message)
+            logger.info(f"Mensagem salva: {message.id} - {role}")
+            return message
+        except Exception as e:
+            logger.error(f"Erro ao salvar mensagem: {e}")
+            session.rollback()
+            raise
     
     def get_conversation_history(self, session: Session, conversation_id: str, limit: int = 10) -> List[MessageHistory]:
         """Recupera o histórico de uma conversa."""
-        query = select(Message).where(
-            Message.conversation_id == conversation_id
-        ).order_by(desc(Message.created_at)).limit(limit)
-        
-        messages = session.execute(query).scalars().all()
-        
-        return [
-            MessageHistory(
-                id=msg.id,
-                role=msg.role,
-                content=msg.content,
-                tool_name=msg.tool_name,
-                created_at=msg.created_at
-            ) for msg in reversed(messages)  # Ordem cronológica
-        ]
+        try:
+            query = select(Message).where(
+                Message.conversation_id == conversation_id
+            ).order_by(Message.created_at.asc()).limit(limit)
+            
+            messages = session.execute(query).scalars().all()
+            
+            return [
+                MessageHistory(
+                    id=msg.id,
+                    role=msg.role,
+                    content=msg.content,
+                    tool_name=msg.tool_name,
+                    created_at=msg.created_at
+                ) for msg in messages
+            ]
+        except Exception as e:
+            logger.error(f"Erro ao recuperar histórico: {e}")
+            return []
     
     def search_similar_messages(self, session: Session, query_text: str, 
-                               limit: int = 5, max_distance: float = 0.3) -> List[SearchResult]:
-        """Busca mensagens similares usando embeddings."""
-        query_embedding = self.get_embedding(query_text)
-        if not query_embedding:
-            return []
-        
+                               conversation_id: Optional[str] = None,
+                               limit: int = 5, max_distance: float = 0.7) -> List[SearchResult]:
+        """Busca mensagens similares usando embeddings para implementar RAG."""
         try:
+            query_embedding = self.get_embedding(query_text)
+            if not query_embedding:
+                return []
+            
             results = []
-            for message, distance in simple_distance_query(session, query_embedding, limit, max_distance):
+            
+            # Busca por similaridade usando pgvector
+            distance = Message.embedding.cosine_distance(query_embedding).label("distance")
+            
+            query = select(Message, distance).where(
+                Message.embedding.isnot(None)
+            ).where(
+                distance < max_distance
+            )
+            
+            # Se temos uma conversa específica, incluir mensagens dela também
+            if conversation_id:
+                # Buscar tanto mensagens similares globalmente quanto da conversa atual
+                query = query.where(
+                    Message.conversation_id != conversation_id  # Evitar duplicatas
+                )
+            
+            query = query.order_by(distance.asc()).limit(limit)
+            
+            query_result = session.execute(query)
+            
+            for message, distance in query_result:
                 similarity = (1 - distance) * 100  # Converte distância em similaridade percentual
                 results.append(SearchResult(
                     message_id=message.id,
@@ -109,6 +150,8 @@ class ChatService:
                     created_at=message.created_at,
                     conversation_id=message.conversation_id
                 ))
+            
+            logger.info(f"Encontradas {len(results)} mensagens similares")
             return results
         except Exception as e:
             logger.error(f"Erro na busca por similaridade: {e}")
@@ -127,80 +170,91 @@ class ChatService:
                 formatted.append({
                     "role": "tool",
                     "content": msg.content,
-                    "tool_call_id": msg.tool_name  # Simplificado para este exemplo
+                    "tool_call_id": msg.tool_call_id or msg.tool_name
                 })
         return formatted
+    
+    def build_rag_context(self, similar_messages: List[SearchResult], conversation_history: List[MessageHistory]) -> str:
+        """Constrói o contexto RAG combinando mensagens similares e histórico."""
+        context_parts = []
+        
+        if similar_messages:
+            context_parts.append("=== CONTEXTO DE CONVERSAS ANTERIORES ===")
+            for msg in similar_messages:
+                context_parts.append(f"[Similaridade: {msg.similarity}%] {msg.content}")
+        
+        if conversation_history:
+            context_parts.append("\n=== HISTÓRICO DA CONVERSA ATUAL ===")
+            for msg in conversation_history[:-1]:  # Excluir a última mensagem (atual)
+                context_parts.append(f"[{msg.role.upper()}]: {msg.content}")
+        
+        return "\n".join(context_parts) if context_parts else ""
     
     def process_chat_message(self, session: Session, user_message: str, 
                            conversation_id: Optional[str] = None, 
                            use_history: bool = True, 
                            max_history_messages: int = 10) -> Tuple[str, str, List[str], List[str], Optional[int]]:
         """
-        Processa uma mensagem de chat completa.
+        Processa uma mensagem de chat completa com RAG.
         
         Returns:
             Tuple com (resposta, conversation_id, tools_used, sources_used, total_tokens)
         """
-        # Criar ou recuperar conversa
-        conversation = self.create_or_get_conversation(session, conversation_id)
-        
-        # Salvar mensagem do usuário
-        user_msg = self.save_message(session, conversation.id, "user", user_message)
-        
-        # Buscar contexto relevante do histórico
-        sources_used = []
-        context_messages = []
-        
-        if use_history:
-            # Buscar mensagens similares de outras conversas
-            similar_messages = self.search_similar_messages(session, user_message, limit=3)
-            if similar_messages:
-                context_info = "Informações relevantes do histórico:\n"
-                for result in similar_messages:
-                    context_info += f"- {result.content[:200]}... (similaridade: {result.similarity}%)\n"
-                    sources_used.append(f"Mensagem {result.message_id[:8]} ({result.similarity}%)")
-                
-                context_messages.append({
-                    "role": "system",
-                    "content": f"Use as seguintes informações do histórico quando relevantes:\n{context_info}"
-                })
+        try:
+            # Criar ou recuperar conversa
+            conversation = self.create_or_get_conversation(session, conversation_id)
             
-            # Buscar histórico da conversa atual
-            history = self.get_conversation_history(session, conversation.id, max_history_messages)
-            if history:
-                # Remove a última mensagem (que é a que acabamos de adicionar)
-                history = history[:-1] if history else []
-                context_messages.extend(self.format_messages_for_openai(history))
-        
-        # Preparar mensagens para OpenAI
-        messages = [
-            {
-                "role": "system",
-                "content": """Você é um assistente útil e inteligente. Você tem acesso a várias ferramentas que podem ajudar a responder perguntas do usuário.
+            # Salvar mensagem do usuário
+            user_msg = self.save_message(session, conversation.id, "user", user_message)
+            
+            # Buscar contexto relevante do histórico (RAG)
+            sources_used = []
+            rag_context = ""
+            
+            if use_history:
+                # Buscar mensagens similares de todas as conversas para RAG
+                similar_messages = self.search_similar_messages(
+                    session, user_message, 
+                    conversation_id=conversation.id,
+                    limit=3
+                )
+                
+                # Buscar histórico da conversa atual
+                history = self.get_conversation_history(session, conversation.id, max_history_messages)
+                
+                # Construir contexto RAG
+                rag_context = self.build_rag_context(similar_messages, history)
+                
+                # Registrar fontes utilizadas
+                for result in similar_messages:
+                    sources_used.append(f"Conversa {result.conversation_id[:8]} ({result.similarity}%)")
+            
+            # Preparar mensagens para OpenAI
+            messages = [
+                {
+                    "role": "system",
+                    "content": f"""Você é um assistente inteligente que aprende com conversas anteriores.
 
-Quando informações do histórico forem fornecidas, cite-as naturalmente em sua resposta quando relevantes. 
+IMPORTANTE: Use o contexto fornecido para dar respostas mais precisas e relevantes. Quando apropriado, referencie informações anteriores naturalmente.
 
-Use as ferramentas disponíveis quando apropriado:
+Você tem acesso a ferramentas úteis:
 - calculator: Para cálculos matemáticos
 - get_current_datetime: Para obter data/hora atual
-- text_analyzer: Para analisar textos
+- text_analyzer: Para analisar textos  
 - search_knowledge_base: Para buscar informações técnicas
 
-Seja conversacional, útil e preciso nas suas respostas."""
-            }
-        ]
-        
-        messages.extend(context_messages)
-        messages.append({
-            "role": "user", 
-            "content": user_message
-        })
-        
-        # Chamada para OpenAI com tools
-        tools_used = []
-        total_tokens = 0
-        
-        try:
+{f"CONTEXTO RELEVANTE:\\n{rag_context}" if rag_context else ""}"""
+                },
+                {
+                    "role": "user", 
+                    "content": user_message
+                }
+            ]
+            
+            # Chamada para OpenAI com tools
+            tools_used = []
+            total_tokens = 0
+            
             response = self.client.chat.completions.create(
                 model=self.chat_model,
                 messages=messages,
@@ -214,7 +268,24 @@ Seja conversacional, útil e preciso nas suas respostas."""
             assistant_message = response.choices[0].message
             
             # Processar tool calls se houver
+            final_content = assistant_message.content or ""
+            
             if assistant_message.tool_calls:
+                messages.append({
+                    "role": "assistant",
+                    "content": assistant_message.content or "",
+                    "tool_calls": [
+                        {
+                            "id": tool_call.id,
+                            "type": "function",
+                            "function": {
+                                "name": tool_call.function.name,
+                                "arguments": tool_call.function.arguments
+                            }
+                        } for tool_call in assistant_message.tool_calls
+                    ]
+                })
+                
                 for tool_call in assistant_message.tool_calls:
                     tool_name = tool_call.function.name
                     tool_args = json.loads(tool_call.function.arguments)
@@ -233,19 +304,6 @@ Seja conversacional, útil e preciso nas suas respostas."""
                     
                     # Adicionar resultado da tool às mensagens
                     messages.append({
-                        "role": "assistant",
-                        "content": assistant_message.content or "",
-                        "tool_calls": [{
-                            "id": tool_call.id,
-                            "type": "function",
-                            "function": {
-                                "name": tool_name,
-                                "arguments": json.dumps(tool_args)
-                            }
-                        }]
-                    })
-                    
-                    messages.append({
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": tool_result
@@ -262,21 +320,24 @@ Seja conversacional, útil e preciso nas suas respostas."""
                 if final_response.usage:
                     total_tokens += final_response.usage.total_tokens
                 
-                final_content = final_response.choices[0].message.content
-            else:
-                final_content = assistant_message.content
+                final_content = final_response.choices[0].message.content or ""
             
             # Salvar resposta do assistente
-            assistant_msg = self.save_message(session, conversation.id, "assistant", final_content or "")
+            assistant_msg = self.save_message(session, conversation.id, "assistant", final_content)
             
             # Atualizar timestamp da conversa
             conversation.updated_at = datetime.utcnow()
             session.commit()
             
-            return final_content or "", conversation.id, tools_used, sources_used, total_tokens
+            logger.info(f"Chat processado com sucesso. Tokens: {total_tokens}")
+            return final_content, conversation.id, tools_used, sources_used, total_tokens
             
         except Exception as e:
             logger.error(f"Erro ao processar mensagem: {e}")
+            session.rollback()
             error_response = f"Desculpe, ocorreu um erro ao processar sua mensagem: {str(e)}"
-            self.save_message(session, conversation.id, "assistant", error_response)
-            return error_response, conversation.id, [], [], None
+            try:
+                self.save_message(session, conversation.id, "assistant", error_response)
+            except:
+                pass  # Se não conseguir salvar erro, apenas retornar
+            return error_response, conversation.id if 'conversation' in locals() else "", [], [], None

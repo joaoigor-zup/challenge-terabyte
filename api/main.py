@@ -7,9 +7,9 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
-from sqlalchemy import select, desc, func
+from sqlalchemy import select, desc, func, text
 
-from api.database import get_db, create_tables, SessionLocal
+from api.database import get_db, create_tables, SessionLocal, test_db_connection
 from api.models import Conversation, Message
 from api.chat_service import ChatService
 from api.config import get_settings, Settings
@@ -28,11 +28,10 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-# Criar tabelas na inicialização
-create_tables()
+# Inicializar configurações
+settings = get_settings()
 
 # Inicializar app
-settings = get_settings()
 app = FastAPI(
     title=settings.api_title,
     description=settings.api_description,
@@ -48,38 +47,80 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inicializar serviço de chat
+# Verificar configurações essenciais
 if not settings.openai_api_key:
     logger.error("OPENAI_API_KEY não configurada!")
     raise ValueError("OPENAI_API_KEY é obrigatória")
 
+# Inicializar serviço de chat
 chat_service = ChatService(settings.openai_api_key)
+
+@app.on_event("startup")
+async def startup_event():
+    """Inicialização da aplicação."""
+    logger.info("Iniciando aplicação...")
+    
+    # Testar conexão com banco
+    if not test_db_connection():
+        logger.error("Falha na conexão com banco de dados!")
+        raise Exception("Não foi possível conectar ao banco de dados")
+    
+    # Criar tabelas
+    try:
+        create_tables()
+        logger.info("Tabelas verificadas/criadas com sucesso")
+    except Exception as e:
+        logger.error(f"Erro ao criar tabelas: {e}")
+        raise
+    
+    logger.info("Aplicação iniciada com sucesso!")
 
 @app.get("/", response_model=HealthCheck)
 def health_check(db: Session = Depends(get_db)):
     """Health check endpoint."""
     try:
         # Testar conexão com banco
-        db.execute(select(1))
+        db.execute(text("SELECT 1"))
         db_status = "connected"
+        
+        # Verificar tabelas
+        tables_result = db.execute(text("""
+            SELECT table_name FROM information_schema.tables 
+            WHERE table_schema = 'public'
+        """))
+        tables = [row[0] for row in tables_result]
+        
+        # Contar registros nas tabelas principais
+        conversations_count = db.execute(text("SELECT COUNT(*) FROM conversations")).scalar()
+        messages_count = db.execute(text("SELECT COUNT(*) FROM messages")).scalar()
         
         return HealthCheck(
             status="healthy",
             database=db_status,
             timestamp=datetime.utcnow(),
-            available_tools=list(FUNCTION_MAPPING.keys())
+            available_tools=list(FUNCTION_MAPPING.keys()),
+            tables=tables,
+            conversations_count=conversations_count,
+            messages_count=messages_count
         )
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            content={"status": "unhealthy", "error": str(e)}
+            content={
+                "status": "unhealthy", 
+                "error": str(e),
+                "database": "disconnected",
+                "timestamp": datetime.utcnow().isoformat()
+            }
         )
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, db: Session = Depends(get_db)):
-    """Endpoint principal do chat."""
+    """Endpoint principal do chat com RAG."""
     try:
+        logger.info(f"Recebida mensagem: {request.message[:100]}...")
+        
         response, conversation_id, tools_used, sources_used, total_tokens = chat_service.process_chat_message(
             session=db,
             user_message=request.message,
@@ -96,6 +137,8 @@ def chat(request: ChatRequest, db: Session = Depends(get_db)):
         ).scalar_one_or_none()
         
         message_id = last_message.id if last_message else "unknown"
+        
+        logger.info(f"Chat processado com sucesso. Conversa: {conversation_id}")
         
         return ChatResponse(
             response=response,
@@ -228,10 +271,7 @@ def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
                 detail="Conversa não encontrada"
             )
         
-        # Deletar mensagens
-        db.execute(
-            select(Message).where(Message.conversation_id == conversation_id)
-        )
+        # Deletar mensagens primeiro
         messages = db.execute(
             select(Message).where(Message.conversation_id == conversation_id)
         ).scalars().all()
@@ -243,6 +283,7 @@ def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
         db.delete(conversation)
         db.commit()
         
+        logger.info(f"Conversa {conversation_id} deletada com sucesso")
         return {"message": "Conversa deletada com sucesso"}
         
     except HTTPException:
@@ -255,33 +296,48 @@ def delete_conversation(conversation_id: str, db: Session = Depends(get_db)):
             detail=str(e)
         )
 
-# Manter endpoints de teste para compatibilidade
+# Endpoints de teste/debug
 @app.get("/test-connection")
 def test_connection():
     """Testa conexão com banco de dados."""
-    with SessionLocal() as session:
-        return {
-            "message": "DB Connected", 
-            "connection": str(session.connection().engine.url.render_as_string(hide_password=True))
-        }
+    try:
+        with SessionLocal() as session:
+            session.execute(text("SELECT 1"))
+            return {
+                "message": "DB Connected", 
+                "connection": str(session.connection().engine.url).replace(
+                    session.connection().engine.url.password or "", "***"
+                )
+            }
+    except Exception as e:
+        return {"message": "DB Connection Failed", "error": str(e)}
 
 @app.get("/test-distance")
 def test_distance():
-    """Testa busca por distância (endpoint legado)."""
-    with SessionLocal() as session:
-        result = []
-        try:
+    """Testa busca por distância usando dados de exemplo."""
+    try:
+        with SessionLocal() as session:
+            result = []
+            
+            # Buscar por mensagens similares ao vetor de exemplo
             from api.database import simple_distance_query
             
-            for memory, distance in simple_distance_query(session, vector_to_compare):
+            for message, distance in simple_distance_query(session, vector_to_compare, limit=5):
                 result.append({
-                    "memory": {"id": memory.id, "content": memory.content},
-                    "proximity": (1 - distance) * 100
+                    "message": {
+                        "id": message.id, 
+                        "content": message.content,
+                        "conversation_id": message.conversation_id,
+                        "role": message.role
+                    },
+                    "distance": float(distance),
+                    "similarity": round((1 - distance) * 100, 2)
                 })
-            return {"items": result}
-        except Exception as e:
-            logger.error(f"Erro no teste de distância: {e}")
-            return {"items": [], "error": str(e)}
+            
+            return {"items": result, "total": len(result)}
+    except Exception as e:
+        logger.error(f"Erro no teste de distância: {e}")
+        return {"items": [], "error": str(e)}
 
 if __name__ == "__main__":
     import uvicorn

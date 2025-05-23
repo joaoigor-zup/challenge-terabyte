@@ -10,10 +10,10 @@ logger = getLogger(__name__)
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres:postgres@localhost:6000/postgres")
 
 def get_engine():
-    return create_engine(DATABASE_URL, echo=False)
+    return create_engine(DATABASE_URL, echo=False, pool_pre_ping=True)
 
 engine = get_engine()
-SessionLocal = sessionmaker(bind=engine)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
 Base = declarative_base()
 
@@ -27,8 +27,15 @@ class Memory(Base):
 
 def create_tables():
     """Cria todas as tabelas do banco de dados."""
-    Base.metadata.create_all(bind=engine)
-    logger.info("Tabelas criadas com sucesso")
+    try:
+        # Importar modelos aqui para evitar circular import
+        from api.models import Conversation, Message
+        
+        Base.metadata.create_all(bind=engine)
+        logger.info("Tabelas criadas com sucesso")
+    except Exception as e:
+        logger.error(f"Erro ao criar tabelas: {e}")
+        raise
 
 def get_db():
     """Dependency para obter sessão do banco de dados."""
@@ -50,13 +57,28 @@ def simple_distance_query(session: Session, query_vector: list[float], limit: in
     """
     from api.models import Message  # Import tardio para evitar circular import
     
-    distance = Message.embedding.cosine_distance(query_vector).label("distance")
-    select_query = select(Message, distance).where(
-        Message.embedding.isnot(None)
-    ).where(
-        distance < max_distance
-    ).order_by(distance.asc()).limit(limit)
+    try:
+        distance = Message.embedding.cosine_distance(query_vector).label("distance")
+        select_query = select(Message, distance).where(
+            Message.embedding.isnot(None)
+        ).where(
+            distance < max_distance
+        ).order_by(distance.asc()).limit(limit)
 
-    logger.info(f"Executando busca por similaridade com {len(query_vector)} dimensões")
+        logger.info(f"Executando busca por similaridade com {len(query_vector)} dimensões")
 
-    return session.execute(select_query)
+        return session.execute(select_query)
+    except Exception as e:
+        logger.error(f"Erro na busca por similaridade: {e}")
+        return []
+
+def test_db_connection():
+    """Testa a conexão com o banco de dados."""
+    try:
+        with SessionLocal() as session:
+            result = session.execute(select(1))
+            logger.info("Conexão com banco de dados OK")
+            return True
+    except Exception as e:
+        logger.error(f"Erro na conexão com banco: {e}")
+        return False

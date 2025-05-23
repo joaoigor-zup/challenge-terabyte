@@ -1,4 +1,7 @@
+
 import os
+from typing import Optional
+from pydantic import BaseModel
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
@@ -25,10 +28,17 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        case_sensitive = False
 
 # Instância global das configurações
-settings = Settings()
+_settings: Optional[Settings] = None
 
 def get_settings() -> Settings:
-    """Retorna as configurações da aplicação."""
-    return settings
+    """Retorna as configurações da aplicação (singleton)."""
+    global _settings
+    if _settings is None:
+        _settings = Settings()
+    return _settings
+
+# Para compatibilidade
+settings = get_settings() 

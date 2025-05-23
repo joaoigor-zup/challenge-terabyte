@@ -44,3 +44,8 @@ uvicorn[standard]==0.34.2 ; python_version >= "3.12"
 uvloop==0.21.0 ; sys_platform != "win32" and sys_platform != "cygwin" and platform_python_implementation != "PyPy" and python_version >= "3.12"
 watchfiles==1.0.5 ; python_version >= "3.12"
 websockets==15.0.1 ; python_version >= "3.12"
+langchain
+langchain-openai
+langchain_postgres
+psycopg-binary
+

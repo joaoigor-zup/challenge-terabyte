@@ -2,3 +2,7 @@
 .idea
 
 api/__pycache__/**
+
+.env
+
+challenge_env/*

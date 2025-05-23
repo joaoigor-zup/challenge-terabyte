@@ -1,16 +1,16 @@
 import os
-from pydantic import BaseSettings
+from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     """Configurações da aplicação."""
     
     # Database
-    database_url: str = os.getenv("OPENAI_API_KEY")
+    database_url: str = os.getenv("DATABASE_URL", "postgresql+psycopg2://postgres:postgres@localhost:6000/postgres")
     
     # OpenAI
-    openai_api_key: str = os.getenv("OPENAI_MODEL")
-    openai_model: str = os.getenv("OPENAI_MODEL")
-    openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL")
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    openai_model: str = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large")
     
     # Chat settings
     max_history_messages: int = 10

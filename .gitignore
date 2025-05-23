@@ -1,4 +1,6 @@
 .venv
 .idea
+.env
+.vscode
 
 api/__pycache__/**

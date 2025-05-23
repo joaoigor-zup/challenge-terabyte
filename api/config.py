@@ -5,12 +5,12 @@ class Settings(BaseSettings):
     """Configurações da aplicação."""
     
     # Database
-    database_url: str = "postgresql+psycopg2://postgres:postgres@localhost:6000/postgres"
+    database_url: str = os.getenv("OPENAI_API_KEY")
     
     # OpenAI
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
-    openai_embedding_model: str = "text-embedding-3-large"
+    openai_api_key: str = os.getenv("OPENAI_MODEL")
+    openai_model: str = os.getenv("OPENAI_MODEL")
+    openai_embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL")
     
     # Chat settings
     max_history_messages: int = 10

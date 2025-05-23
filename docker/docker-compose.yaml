@@ -27,6 +27,14 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg2://postgres:postgres@postgresql:5432/postgres
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - OPENAI_EMBEDDING_MODEL=${OPENAI_EMBEDDING_MODEL:-text-embedding-3-large}
+      - MAX_HISTORY_MESSAGES=${MAX_HISTORY_MESSAGES:-10}
+      - MAX_SIMILAR_MESSAGES=${MAX_SIMILAR_MESSAGES:-3}
+      - SIMILARITY_THRESHOLD=${SIMILARITY_THRESHOLD:-0.3}
+      - API_TITLE=${API_TITLE:-Terabyte Challenge Chat API}
+      - API_DESCRIPTION=${API_DESCRIPTION:-API de chat with LLM, vector search e function calling}
+      - API_VERSION=${API_VERSION:-1.0.0}
       - PYTHONPATH=/app
     volumes:
       - ../:/app:ro

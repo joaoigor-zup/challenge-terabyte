@@ -23,7 +23,7 @@ class Memory(Base):
     vector = mapped_column(Vector(), nullable=False)
 
 
-def simples_distance_query(session: Session, query_vector: list[float], limit: int = 100, max_distance: float = 30.0) -> Result[tuple[Memory, float]]:
+def simpleDistanceQuery(session: Session, query_vector: list[float], limit: int = 100, max_distance: float = 30.0) -> Result[tuple[Memory, float]]:
     distance = Memory.vector.cosine_distance(query_vector).label("distance")
     select_query = select(Memory, distance).where(distance < max_distance).order_by(distance.asc()).limit(limit)
 

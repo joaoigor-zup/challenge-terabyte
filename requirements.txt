@@ -20,7 +20,7 @@ markdown-it-py==3.0.0 ; python_version >= "3.12"
 markupsafe==3.0.2 ; python_version >= "3.12"
 mdurl==0.1.2 ; python_version >= "3.12"
 numpy==2.2.6 ; python_version >= "3.12"
-openai==1.81.0 ; python_version >= "3.12"
+ollama==0.4.8
 pgvector==0.4.1 ; python_version >= "3.12"
 psycopg2-binary==2.9.10 ; python_version >= "3.12"
 pydantic-core==2.33.2 ; python_version >= "3.12"

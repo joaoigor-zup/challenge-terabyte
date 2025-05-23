@@ -2,8 +2,10 @@ import logging
 
 from fastapi import FastAPI
 
-from api.database import SessionLocal, simples_distance_query
-from api.utils import vector_to_compare
+from api import llmService
+from api.database import SessionLocal, simpleDistanceQuery
+from api.requests import ChatRequest
+from api.utils import vectorToCompare
 
 # Configure logging
 logging.basicConfig(
@@ -20,13 +22,18 @@ def entrypoint():
         return {"message": "DB Connected", "connection": str(session.connection().engine.url.render_as_string(hide_password=True))}
 
 
-@app.get("/test-distance")
-def test_distance():
+@app.get("/test_distance")
+def testDistance():
     with SessionLocal() as session:
         result = []
 
-        for memory, distance in simples_distance_query(
-                session, vector_to_compare
+        for memory, distance in simpleDistanceQuery(
+                session, vectorToCompare
         ):
             result.append({"memory": {"id": memory.id, "content": memory.content }, "proximity": (1 - distance) * 100})
         return {"items": result}
+
+
+@app.post("/chat")
+def chatWithLlm(request: ChatRequest)-> str:
+    return llmService.postChat(request.message)
